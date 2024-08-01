@@ -1,4 +1,5 @@
 import itertools
+import hashlib
 import json
 import logging
 import sys
@@ -94,7 +95,6 @@ def allowed_op_id(operation_id: str) -> bool:
 
 def output(post) -> int:
     """Prints out the post and extracts the custom_json"""
-
     data = json.loads(post["op"][1]['json'])
 
     if Config.json:
@@ -132,12 +132,14 @@ def output(post) -> int:
             # ZMQ Socket will block until it receives acknowledgement
             Config.socket_send(data.get("url"))
             Config.zsocket_send(data.get("url"))
+            Config.kafka_send(data.get("url"))
             return 1
         elif data.get("urls"):
             for url in data.get("urls"):
                 print(url)
                 Config.socket_send(url)
                 Config.zsocket_send(url)
+                Config.kafka_send(data.get("url"))
             return data.get("num_urls")
 
     if Config.use_socket:
@@ -154,6 +156,14 @@ def output(post) -> int:
             for url in data.get("urls"):
                 Config.zsocket_send(url)
 
+    if Config.use_kafka:
+        if data.get("url"):
+            Config.kafka_send(post["block"], post["trx_id"], data.get("medium"), data.get("reason"), data.get("timestampNs"), data.get("sessionId"), data.get("url"))
+        elif data.get("urls"):
+            for url in data.get("urls"):
+                Config.kafka_send(post["block"], post["trx_id"], data.get("medium"), data.get("reason"), data.get("timestampNs"), data.get("sessionId"), url)
+
+    data["block_nr"] = post["block"]
     data["trx_id"] = post["trx_id"]
     data["timestamp"] = post["timestamp"]
 
@@ -163,7 +173,7 @@ def output(post) -> int:
 
     if data.get("url"):
         logging.info(
-            f"Feed Updated | {data['timestamp']} | {data['trx_id']} "
+            f"Feed Updated | {data['timestamp']} | {data['block_nr']} | {data['trx_id']} "
             f"| {data.get('url')} | {post['op'][1]['required_posting_auths']}"
             f" | {data['medium_reason']}"
         )
@@ -172,7 +182,7 @@ def output(post) -> int:
         for url in data.get("urls"):
             count += 1
             logging.info(
-                f"Feed Updated | {data['timestamp']} | {data['trx_id']}"
+                f"Feed Updated | {data['timestamp']} | {data['block_nr']} | {data['trx_id']}"
                 f" | {url} | {post['op'][1]['required_posting_auths']}"
                 f" | {data['medium_reason']}"
             )

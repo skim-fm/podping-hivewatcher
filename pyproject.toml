@@ -12,6 +12,9 @@ pyzmq = "^26.2.1"
 pendulum = "^3.0.0"
 beem = "^0.24.26"
 backoff = "^2.2.1"
+steem-async = "^2.1.0"
+pydantic = "^2.8.2"
+confluent-kafka = "^2.5.0"
 
 [tool.poetry.dev-dependencies]
 black = "^22.12.0"

@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import json
 import math
 import os
 import re
@@ -6,6 +8,7 @@ from socket import AF_INET, SOCK_STREAM, socket
 from ipaddress import IPv4Address, IPv6Address, AddressValueError
 
 import zmq
+from confluent_kafka import Producer
 from lighthive.client import Client
 import pendulum
 from lighthive.exceptions import RPCNodeException
@@ -219,6 +222,14 @@ group_zmq_socket.add_argument(
 )
 
 my_parser.add_argument(
+    "-k",
+    "--kafka",
+    action="store_true",
+    required=False,
+    help="TODO: comment",
+)
+
+my_parser.add_argument(
     "-t", "--test", action="store_true", required=False, help="Use a test net API"
 )
 
@@ -249,6 +260,11 @@ class Config:
     DIAGNOSTIC_OPERATION_IDS = ["podping-startup", "pp_startup"]
     TEST_NODE = ["https://testnet.openhive.network"]
 
+    KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
+    KAFKA_CLIENT_ID = os.getenv("KAFKA_CLIENT_ID", "podcastindex-hivewatcher")
+    KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "podcastindex-podpings")
+
+
     test = my_args["test"]
     quiet = my_args["quiet"]
     reports = my_args["reports"]
@@ -264,6 +280,7 @@ class Config:
     stop_after = my_args["stop_after"]
     use_socket = my_args["socket"]
     use_zmq = my_args["zmq"]
+    use_kafka = my_args["kafka"]
     livetest = my_args["livetest"]
 
     @classmethod
@@ -294,6 +311,26 @@ class Config:
                 msg = cls.zsocket.recv_string()
             except Exception as ex:
                 print(f"Exception: {ex}")
+    @classmethod
+    def kafka_send(cls, block_nr, tx_id, medium, reason, timestamp_ns, session_id, url):
+        """Send a single URL to the kafka topic specified in startup"""
+
+        def acked(err, msg):
+            if err is not None:
+                print("Failed to deliver message: %s: %s" % (str(msg), str(err)))
+
+        if cls.kafka:
+            json_data = json.dumps({
+                "block_nr": block_nr,
+                "tx_id": tx_id,
+                "timestamp_ns": timestamp_ns,
+                "session_id": session_id,
+                "medium": medium,
+                "reason": reason,
+                "url": url
+            })
+            cls.kafka.produce(cls.KAFKA_TOPIC, key= hashlib.sha256(json_data.encode('utf-8')).hexdigest(), value = json_data, callback=acked)
+            cls.kafka.poll(1)
 
     @classmethod
     def setup(cls, client: Client):
@@ -379,6 +416,22 @@ class Config:
             cls.zsocket = context.socket(zmq.REQ)
             print(f"tcp://{cls.ip_address}:{cls.ip_port}")
             cls.zsocket.connect(f"tcp://{cls.ip_address}:{cls.ip_port}")
+
+        cls.kafka = None
+        if cls.use_kafka:
+
+            conf = {
+                 "bootstrap.servers": cls.KAFKA_BOOTSTRAP_SERVERS,
+                 "client.id": cls.KAFKA_CLIENT_ID,
+                 "enable.idempotence": True,  # EOS processing
+                 "compression.type": "lz4",
+                 "batch.size": 64000,
+                 "linger.ms": 10,
+                 "acks": "all",  # Wait for the leader and all ISR to send response back
+                 "retries": 5,
+                 "delivery.timeout.ms": 1000
+            }
+            cls.kafka = Producer(conf)
 
         if cls.livetest:
             cls.WATCHED_OPERATION_IDS = ["podping-livetest", "pplt_"]

@@ -1,0 +1,74 @@
+version: '3.7'
+services:
+
+  hivewatcher:
+    image: podcastindex/hivewatcher:latest
+    container_name: hivewatcher
+    command: bash -c "python3 -u ./hive-watcher.py --kafka"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda-1:29092
+      KAFKA_CLIENT_ID: podcastindex-hivewatcher
+      KAFKA_TOPIC: podcastindex-podpings
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - hivewatcher.localhost
+
+  redpanda-1:
+    image: docker.redpanda.com/vectorized/redpanda:v22.3.5
+    container_name: redpanda-1
+    command:
+      - redpanda
+      - start
+      - --smp
+      - '1'
+      - --reserve-memory
+      - 0M
+      - --overprovisioned
+      - --node-id
+      - '1'
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda-1:29092,OUTSIDE://localhost:9092
+      - --pandaproxy-addr
+      - PLAINTEXT://0.0.0.0:28082,OUTSIDE://0.0.0.0:8082
+      - --advertise-pandaproxy-addr
+      - PLAINTEXT://redpanda-1:28082,OUTSIDE://localhost:8082
+      - --rpc-addr
+      - 0.0.0.0:33145
+      - --advertise-rpc-addr
+      - redpanda-1:33145
+    networks:
+      default:
+        aliases:
+          - redpanda-1.localhost
+    ports:
+      - 8082:8082
+      - 9092:9092
+      - 28082:28082
+      - 29092:29092
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    container_name: redpanda-console
+    entrypoint: /bin/sh
+    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda-1:29092"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda-1:9644"]
+    networks:
+      default:
+        aliases:
+          - redpanda-console.localhost
+    ports:
+      - "9090:8080"
+    depends_on:
+      - redpanda-1
